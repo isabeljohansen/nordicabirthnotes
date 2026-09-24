@@ -54,9 +54,26 @@ function parseVideoUrl(url) {
   return null;
 }
 
+const svg = (inner) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+
+const ICONS = {
+  notepad: svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>'),
+  comment: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  checklist: svg('<path d="M21 10.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.5"/><path d="m9 11 3 3L22 4"/>'),
+  link: svg('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'),
+  table: svg('<path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>'),
+  swatch: svg('<circle cx="12" cy="12" r="8.5" stroke="none" style="fill:var(--swatch-icon)"/>'),
+  image: svg('<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>'),
+  document: svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>'),
+  audio: svg('<path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/>'),
+  video: svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 8 6 4-6 4Z"/>'),
+  drawing: svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>'),
+};
+
 export const CARD_TYPES = {
   notepad: {
-    label: 'Notepad', accent: '#ece1c8',
+    label: 'Notepad', icon: ICONS.notepad,
     defaultSize: { w: 260, h: 200 },
     createData: () => ({ html: '' }),
     render(card, body, ctx) {
@@ -71,7 +88,7 @@ export const CARD_TYPES = {
   },
 
   comment: {
-    label: 'Comment', accent: '#ddd4bd',
+    label: 'Comment', icon: ICONS.comment,
     defaultSize: { w: 200, h: 60 },
     createData: () => ({ text: '' }),
     render(card, body, ctx) {
@@ -106,7 +123,7 @@ export const CARD_TYPES = {
   },
 
   checklist: {
-    label: 'Checklist', accent: '#bcccc4',
+    label: 'Checklist', icon: ICONS.checklist,
     defaultSize: { w: 240, h: 220 },
     createData: () => ({ items: [{ id: uid(), text: '', done: false }] }),
     render(card, body, ctx) {
@@ -166,7 +183,7 @@ export const CARD_TYPES = {
   },
 
   link: {
-    label: 'Link', accent: '#a9bcc0',
+    label: 'Link', icon: ICONS.link,
     defaultSize: { w: 240, h: 120 },
     createData: () => ({ url: '', title: '' }),
     render(card, body, ctx) {
@@ -208,7 +225,7 @@ export const CARD_TYPES = {
   },
 
   table: {
-    label: 'Table', accent: '#d4c9b0',
+    label: 'Table', icon: ICONS.table,
     defaultSize: { w: 320, h: 200 },
     createData: () => ({ rows: [['', ''], ['', '']] }),
     render(card, body, ctx) {
@@ -265,7 +282,7 @@ export const CARD_TYPES = {
   },
 
   swatch: {
-    label: 'Color', accent: '#e3d9c4',
+    label: 'Color', icon: ICONS.swatch,
     defaultSize: { w: 140, h: 140 },
     createData: () => ({ color: '#c9a9e0', label: '' }),
     render(card, body, ctx) {
@@ -291,7 +308,7 @@ export const CARD_TYPES = {
   },
 
   image: {
-    label: 'Image', accent: '#d8cdb8',
+    label: 'Image', icon: ICONS.image,
     defaultSize: { w: 260, h: 200 },
     createData: () => ({ blobId: null, filename: '' }),
     render(card, body, ctx) {
@@ -327,7 +344,7 @@ export const CARD_TYPES = {
   },
 
   document: {
-    label: 'Document', accent: '#cabfa8',
+    label: 'Document', icon: ICONS.document,
     defaultSize: { w: 220, h: 100 },
     createData: () => ({ blobId: null, filename: '', mimeType: '' }),
     render(card, body, ctx) {
@@ -342,7 +359,8 @@ export const CARD_TYPES = {
         return;
       }
       const wrap = el('div', 'doc-wrap');
-      const icon = el('div', 'doc-icon', { text: '📄' });
+      const icon = el('div', 'doc-icon');
+      icon.innerHTML = ICONS.document;
       const name = el('div', 'doc-name', { text: card.data.filename });
       const openBtn = el('button', 'doc-open', { text: 'Open' });
       openBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -356,7 +374,7 @@ export const CARD_TYPES = {
   },
 
   audio: {
-    label: 'Audio', accent: '#b7c7c0',
+    label: 'Audio', icon: ICONS.audio,
     defaultSize: { w: 260, h: 100 },
     createData: () => ({ blobId: null, filename: '' }),
     render(card, body, ctx) {
@@ -383,7 +401,7 @@ export const CARD_TYPES = {
   },
 
   video: {
-    label: 'Video', accent: '#aebcc0',
+    label: 'Video', icon: ICONS.video,
     defaultSize: { w: 320, h: 200 },
     createData: () => ({ url: '', embedUrl: '' }),
     render(card, body, ctx) {
@@ -419,7 +437,7 @@ export const CARD_TYPES = {
   },
 
   drawing: {
-    label: 'Drawing', accent: '#cdc2a8',
+    label: 'Drawing', icon: ICONS.drawing,
     defaultSize: { w: 280, h: 220 },
     createData: () => ({ strokes: [], color: '#2b2b2b' }),
     render(card, body, ctx) {

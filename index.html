@@ -6,7 +6,7 @@
 <title>Nordica Birth</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600&family=Fraunces:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -27,7 +27,7 @@
         <div id="app-title">Nordica Birth</div>
       </div>
       <div id="board-list"></div>
-      <button id="new-board-btn">+ New board</button>
+      <button id="new-board-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New board</span></button>
       <button id="logout-btn">Log out</button>
     </aside>
 
@@ -35,10 +35,9 @@
       <header id="board-header">
         <div id="board-name" contenteditable="true" spellcheck="false"></div>
         <div id="zoom-controls">
-          <button id="zoom-out" title="Zoom out">−</button>
-          <span id="zoom-level">100%</span>
-          <button id="zoom-in" title="Zoom in">+</button>
-          <button id="zoom-reset" title="Reset view">Reset</button>
+          <button id="zoom-out" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+          <button id="zoom-reset" title="Reset view" aria-label="Reset view"><span id="zoom-level">100%</span></button>
+          <button id="zoom-in" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
       </header>
 

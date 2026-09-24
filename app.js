@@ -222,14 +222,24 @@ async function loadBoard(boardId) {
 
 // ---------- Toolbar ----------
 
+// Thin dividers after these types group the icons: text/notes | data/media | rich media.
+const TOOLBAR_DIVIDE_AFTER = new Set(['link', 'document']);
+
 function buildToolbar() {
   els.toolbar.innerHTML = '';
   for (const [type, def] of Object.entries(CARD_TYPES)) {
     const btn = document.createElement('button');
     btn.className = 'tool-btn';
-    btn.textContent = def.label;
+    btn.innerHTML = def.icon;
+    btn.title = def.label;
+    btn.setAttribute('aria-label', 'Add ' + def.label.toLowerCase());
     btn.addEventListener('click', () => addCard(type));
     els.toolbar.appendChild(btn);
+    if (TOOLBAR_DIVIDE_AFTER.has(type)) {
+      const divider = document.createElement('span');
+      divider.className = 'tool-divider';
+      els.toolbar.appendChild(divider);
+    }
   }
 }
 
@@ -317,10 +327,10 @@ function renderCard(card) {
 
   const handle = document.createElement('div');
   handle.className = 'card-handle';
-  if (card.type !== 'comment' && card.type !== 'image') handle.style.background = def.accent;
   const iconLabel = document.createElement('span');
   iconLabel.className = 'card-handle-icon';
-  iconLabel.textContent = def.label;
+  iconLabel.innerHTML = def.icon;
+  iconLabel.title = def.label;
   const delBtn = document.createElement('button');
   delBtn.className = 'card-delete';
   delBtn.textContent = '×';
