@@ -53,7 +53,10 @@ function screenToWorld(sx, sy) {
 
 // ---------- Init ----------
 
+let initStarted = false;
 async function init() {
+  if (initStarted) return;
+  initStarted = true;
   boards = await db.getAllBoards();
   if (boards.length === 0) {
     const board = { id: uid(), name: 'My First Board', createdAt: Date.now(), view: null };
@@ -193,31 +196,50 @@ els.boardName.addEventListener('keydown', (e) => {
 
 // ---------- Board loading ----------
 
+// Loading a board is a network round-trip, so a second call can start before the
+// first finishes (clicking the open board twice, or hopping between boards). Without
+// the checks below, both loads would draw the board's cards: every card shown twice,
+// stacked exactly on top of each other, each copy saving over the other's size and
+// position, so images seem to resize and move by themselves.
+let loadSeq = 0;
 async function loadBoard(boardId) {
-  currentBoard = boards.find((b) => b.id === boardId);
-  if (!currentBoard) return;
+  const target = boards.find((b) => b.id === boardId);
+  if (!target) return;
+  if (currentBoard && currentBoard.id === boardId) return; // already showing (or loading) it
+
+  const seq = ++loadSeq;
+  currentBoard = target;
   localStorage.setItem(LAST_BOARD_KEY, boardId);
 
-  els.boardName.textContent = currentBoard.name;
+  els.boardName.textContent = target.name;
   els.world.innerHTML = '';
   cards.clear();
   cardEls.clear();
   maxZ = 1;
+  view = target.view || defaultView();
+  applyView();
+  renderSidebar();
 
-  const boardCards = await db.getCardsByBoard(boardId);
+  let boardCards;
+  try {
+    boardCards = await db.getCardsByBoard(boardId);
+  } catch (err) {
+    if (seq === loadSeq) {
+      currentBoard = null; // so clicking the board again retries
+      renderSidebar();
+      showToast("Couldn't load that board: " + (err.message || err));
+    }
+    return;
+  }
+  if (seq !== loadSeq) return; // the user moved on to another board while this loaded
+
   for (const card of boardCards) {
     cards.set(card.id, card);
     maxZ = Math.max(maxZ, card.zIndex || 1);
   }
-
-  view = currentBoard.view || defaultView();
-  applyView();
-
   for (const card of cards.values()) {
     renderCard(card);
   }
-
-  renderSidebar();
 }
 
 // ---------- Toolbar ----------
