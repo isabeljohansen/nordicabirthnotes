@@ -88,7 +88,6 @@ export const CARD_TYPES = {
       editor.innerHTML = card.data.html || '';
       editor.setAttribute('data-placeholder', 'Type a note…');
       editor.addEventListener('input', () => ctx.saveData(card, { html: editor.innerHTML }));
-      editor.addEventListener('pointerdown', (e) => e.stopPropagation());
       body.appendChild(editor);
     },
   },
@@ -124,8 +123,6 @@ export const CARD_TYPES = {
         ctx.saveData(card, { text: editor.innerText });
         fitHeight();
       });
-      // No pointerdown stopPropagation here (unlike other card types): the comment
-      // body itself is draggable, handled by wireBodyDrag in app.js.
       body.appendChild(editor);
       fitHeight();
       // Re-measure whenever the text changes size on its own, e.g. when the web font
@@ -147,7 +144,6 @@ export const CARD_TYPES = {
         const row = el('div', 'checklist-item');
         const cb = el('input', 'checklist-checkbox', { type: 'checkbox' });
         cb.checked = item.done;
-        cb.addEventListener('pointerdown', (e) => e.stopPropagation());
         cb.addEventListener('change', () => {
           item.done = cb.checked;
           ctx.saveData(card, { items: card.data.items });
@@ -155,7 +151,6 @@ export const CARD_TYPES = {
         const text = el('div', 'checklist-text', { contenteditable: 'true' });
         text.innerText = item.text;
         text.setAttribute('data-placeholder', 'List item…');
-        text.addEventListener('pointerdown', (e) => e.stopPropagation());
         text.addEventListener('input', () => {
           item.text = text.innerText;
           ctx.saveData(card, { items: card.data.items });
@@ -171,7 +166,6 @@ export const CARD_TYPES = {
         });
         if (idx === card.data._focusIndex) focusEl = text;
         const del = el('button', 'checklist-del', { text: '×' });
-        del.addEventListener('pointerdown', (e) => e.stopPropagation());
         del.addEventListener('click', () => {
           card.data.items.splice(idx, 1);
           if (card.data.items.length === 0) card.data.items.push({ id: uid(), text: '', done: false });
@@ -183,7 +177,6 @@ export const CARD_TYPES = {
       });
       delete card.data._focusIndex;
       const addBtn = el('button', 'checklist-add', { text: '+ Add item' });
-      addBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
       addBtn.addEventListener('click', () => {
         card.data.items.push({ id: uid(), text: '', done: false });
         card.data._focusIndex = card.data.items.length - 1;
@@ -205,10 +198,8 @@ export const CARD_TYPES = {
         const wrap = el('div', 'link-view');
         const a = el('a', 'link-title', { href: card.data.url, target: '_blank', rel: 'noopener noreferrer' });
         a.textContent = card.data.title || card.data.url;
-        a.addEventListener('pointerdown', (e) => e.stopPropagation());
         const urlLine = el('div', 'link-url', { text: card.data.url });
         const editBtn = el('button', 'link-edit', { text: 'Edit' });
-        editBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
         editBtn.addEventListener('click', () => {
           card.data._editing = true;
           ctx.rerender(card);
@@ -221,9 +212,7 @@ export const CARD_TYPES = {
         const titleInput = el('input', 'link-input', { placeholder: 'Label (optional)' });
         urlInput.value = card.data.url || '';
         titleInput.value = card.data.title || '';
-        [urlInput, titleInput].forEach((i) => i.addEventListener('pointerdown', (e) => e.stopPropagation()));
         const saveBtn = el('button', 'link-save', { text: 'Save' });
-        saveBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
         saveBtn.addEventListener('click', () => {
           let url = urlInput.value.trim();
           if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
@@ -251,7 +240,6 @@ export const CARD_TYPES = {
           const td = el('td');
           const cell = el('div', 'table-cell', { contenteditable: 'true' });
           cell.innerText = cellVal;
-          cell.addEventListener('pointerdown', (e) => e.stopPropagation());
           cell.addEventListener('input', () => {
             card.data.rows[r][c] = cell.innerText;
             ctx.saveData(card, { rows: card.data.rows });
@@ -266,7 +254,6 @@ export const CARD_TYPES = {
       const addCol = el('button', '', { text: '+ Col' });
       const delRow = el('button', '', { text: '− Row' });
       const delCol = el('button', '', { text: '− Col' });
-      [addRow, addCol, delRow, delCol].forEach((b) => b.addEventListener('pointerdown', (e) => e.stopPropagation()));
       addRow.addEventListener('click', () => {
         const cols = card.data.rows[0]?.length || 1;
         card.data.rows.push(new Array(cols).fill(''));
@@ -305,14 +292,12 @@ export const CARD_TYPES = {
       box.style.background = card.data.color;
       const picker = el('input', 'swatch-picker', { type: 'color' });
       picker.value = card.data.color;
-      picker.addEventListener('pointerdown', (e) => e.stopPropagation());
       picker.addEventListener('input', () => {
         box.style.background = picker.value;
         ctx.saveData(card, { color: picker.value, label: card.data.label });
       });
       const label = el('div', 'swatch-label', { contenteditable: 'true' });
       label.innerText = card.data.label || card.data.color;
-      label.addEventListener('pointerdown', (e) => e.stopPropagation());
       label.addEventListener('input', () => ctx.saveData(card, { color: card.data.color, label: label.innerText }));
       box.appendChild(picker);
       wrap.append(box, label);
@@ -380,7 +365,6 @@ export const CARD_TYPES = {
       icon.innerHTML = ICONS.document;
       const name = el('div', 'doc-name', { text: card.data.filename });
       const openBtn = el('button', 'doc-open', { text: 'Open' });
-      openBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
       openBtn.addEventListener('click', async () => {
         const url = await getBlobUrl(card.data.blobId);
         if (url) window.open(url, '_blank');
@@ -409,7 +393,6 @@ export const CARD_TYPES = {
       const wrap = el('div', 'audio-wrap');
       const name = el('div', 'audio-name', { text: card.data.filename });
       const audio = el('audio', 'audio-player', { controls: 'true' });
-      audio.addEventListener('pointerdown', (e) => e.stopPropagation());
       getBlobUrl(card.data.blobId).then((url) => {
         if (url) audio.src = url;
       });
@@ -427,9 +410,7 @@ export const CARD_TYPES = {
       if (!card.data.embedUrl) {
         const form = el('div', 'video-form');
         const input = el('input', 'link-input', { placeholder: 'YouTube or Vimeo URL…' });
-        input.addEventListener('pointerdown', (e) => e.stopPropagation());
         const saveBtn = el('button', 'link-save', { text: 'Embed' });
-        saveBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
         const hint = el('div', 'video-hint', { text: '' });
         saveBtn.addEventListener('click', () => {
           const embedUrl = parseVideoUrl(input.value.trim());
@@ -451,6 +432,10 @@ export const CARD_TYPES = {
         allowfullscreen: 'true',
       });
       body.appendChild(iframe);
+      // An iframe swallows mouse presses, so the card couldn't be grabbed over the video.
+      // The shield takes those presses until the card is selected, then steps aside so
+      // the next click reaches the player.
+      body.appendChild(el('div', 'drag-shield'));
     },
   },
 
@@ -464,14 +449,14 @@ export const CARD_TYPES = {
       const toolbar = el('div', 'drawing-toolbar');
       const colorInput = el('input', 'drawing-color', { type: 'color' });
       colorInput.value = card.data.color || '#2b2b2b';
-      colorInput.addEventListener('pointerdown', (e) => e.stopPropagation());
       const clearBtn = el('button', '', { text: 'Clear' });
-      clearBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
       toolbar.append(colorInput, clearBtn);
 
       const canvas = el('canvas', 'drawing-canvas');
       wrap.append(toolbar, canvas);
       body.appendChild(wrap);
+      // Until selected, presses over the canvas move the card; once selected they draw.
+      body.appendChild(el('div', 'drag-shield'));
 
       const dpr = window.devicePixelRatio || 1;
       function resizeCanvas() {
@@ -507,14 +492,16 @@ export const CARD_TYPES = {
         drawing = true;
         canvas.setPointerCapture(e.pointerId);
         const rect = canvas.getBoundingClientRect();
-        current = { color: colorInput.value, width: 2.5, points: [{ x: e.clientX - rect.left, y: e.clientY - rect.top }] };
+        const k = rect.width / canvas.offsetWidth || 1; // undo the board's zoom
+        current = { color: colorInput.value, width: 2.5, points: [{ x: (e.clientX - rect.left) / k, y: (e.clientY - rect.top) / k }] };
         card.data.strokes.push(current);
       });
       canvas.addEventListener('pointermove', (e) => {
         if (!drawing) return;
         e.stopPropagation();
         const rect = canvas.getBoundingClientRect();
-        current.points.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+        const k = rect.width / canvas.offsetWidth || 1;
+        current.points.push({ x: (e.clientX - rect.left) / k, y: (e.clientY - rect.top) / k });
         redraw();
       });
       const finish = () => {
@@ -536,7 +523,6 @@ export const CARD_TYPES = {
 function makeFilePicker(accept, onFile) {
   const wrap = el('div', 'file-picker');
   const input = el('input', '', { type: 'file', accept });
-  input.addEventListener('pointerdown', (e) => e.stopPropagation());
   input.addEventListener('change', () => {
     if (input.files[0]) onFile(input.files[0]);
   });

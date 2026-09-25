@@ -341,7 +341,8 @@ svg { display: block; }
   background-size: 28px 28px;
 }
 
-/* Cards */
+/* Cards: no banner. A card is just its content in a hairline frame; grab it anywhere that
+   isn't a control, and the only extra chrome is the small trash button shown while selected. */
 .card {
   position: absolute;
   background: var(--card-bg);
@@ -350,46 +351,26 @@ svg { display: block; }
   box-shadow: 0 1px 2px rgba(11, 31, 63, 0.05), 0 6px 18px rgba(11, 31, 63, 0.05);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   min-width: 100px;
   min-height: 60px;
-}
-
-.card-handle {
-  height: 26px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 6px 0 9px;
   cursor: grab;
-  color: var(--ink-soft);
-  user-select: none;
-  background: var(--card-head);
-  border-bottom: 1px solid var(--line);
 }
-.card-handle:active { cursor: grabbing; }
-.card-handle-icon { display: flex; }
-.card-handle-icon svg { width: 14px; height: 14px; }
-.card-delete {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  color: var(--ink-soft);
-  opacity: 0.6;
-  padding: 2px 4px;
+.card:active { cursor: grabbing; }
+.card.selected {
+  box-shadow: 0 0 0 1.5px var(--accent-deep), 0 6px 18px rgba(11, 31, 63, 0.07);
 }
-.card-delete:hover { opacity: 1; }
-.card-delete.confirming { opacity: 1; color: var(--terracotta); font-weight: 600; }
+/* Text only shows the text cursor once its card is selected (that's when a click edits it). */
+.card.selected [contenteditable] { cursor: text; }
 
 .card-body {
+  position: relative;
   flex: 1;
   overflow: auto;
-  padding: 10px 12px;
+  padding: 12px 14px;
   font-size: 13px;
   min-height: 0;
+  border-radius: inherit;
 }
 
 .resize-handle {
@@ -401,49 +382,60 @@ svg { display: block; }
   cursor: nwse-resize;
   border-right: 1.5px solid var(--ink-soft);
   border-bottom: 1.5px solid var(--ink-soft);
-  opacity: 0.55;
+  opacity: 0;
+  z-index: 3;
 }
+.card:hover .resize-handle,
+.card.selected .resize-handle { opacity: 0.55; }
 
-/* Comment cards read as bubbles, not bars-with-a-label */
-.card-comment .card-handle {
-  background: transparent;
-  border-bottom: none;
-  height: 14px;
+/* The one bit of chrome: a small badge on the top-right corner while a card is selected.
+   It straddles the corner (rather than floating above it) so it's never cut off at the
+   top edge of the board. */
+.card-trash {
+  position: absolute;
+  top: -13px;
+  right: -13px;
+  width: 26px;
+  height: 26px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card-bg);
+  color: var(--ink-soft);
+  box-shadow: 0 2px 8px rgba(11, 31, 63, 0.08);
+  cursor: pointer;
+  z-index: 4;
 }
-.card-comment .card-handle-icon { display: none; }
-.card-comment .card-handle { padding-right: 10px; justify-content: flex-end; }
-.card-comment .card-delete { opacity: 0; }
-.card-comment:hover .card-delete { opacity: 0.6; }
+.card.selected .card-trash { display: flex; }
+.card-trash svg { width: 14px; height: 14px; }
+.card-trash:hover { color: var(--terracotta); border-color: var(--terracotta); }
+
+/* Sits over an iframe/canvas so the card can be grabbed there; steps aside once selected
+   so the next click reaches the video player or draws. */
+.drag-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: grab;
+}
+.card.selected .drag-shield { display: none; }
+.card-video .card-body { padding: 0; }
+
+/* Comment cards read as bubbles */
 /* Tuned by measuring the visible letters, not the invisible line boxes: about 21px of
-   clear space on every side. The bottom padding is smaller than the sides on paper because
-   the gap you see below the last line already includes the line's built-in spacing. */
-.card-comment .card-body { padding: 0 20px 16px; overflow: hidden; }
+   clear space on every side. */
+.card-comment .card-body { padding: 14px 20px 16px; overflow: hidden; }
 /* The editor must be exactly as tall as its text (no stretching to fill the body),
    or the bubble can't measure how much room the text really needs. */
 .card-comment .comment-editor { min-height: 0; }
 
-/* Image cards are frameless: no border, no banner, edge-to-edge */
+/* Image cards are frameless: no border, edge-to-edge */
 .card-image { background: transparent; border: none; box-shadow: none; border-radius: 0; min-width: 30px; min-height: 30px; }
-.card-image .card-handle {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 30px;
-  background: transparent;
-  border-bottom: none;
-  z-index: 2;
-  pointer-events: none;
-}
-.card-image .card-handle-icon { display: none; }
-.card-image .card-delete {
-  pointer-events: auto;
-  opacity: 0;
-  background: rgba(250, 247, 243, 0.88);
-  border-radius: 3px;
-}
-.card-image:hover .card-delete { opacity: 0.8; }
+.card-image.selected { box-shadow: none; outline: 1.5px solid var(--accent-deep); outline-offset: 3px; }
 .card-image .card-body { padding: 0; }
-.card-image .resize-handle { opacity: 0; }
-.card-image:hover .resize-handle { opacity: 0.55; }
 
 /* Comment bubble tail */
 .card-comment { overflow: visible; min-height: 46px; border-radius: 12px; }
@@ -597,3 +589,16 @@ svg { display: block; }
   z-index: 10000;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 14px; }
+#toast button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#toast button:hover { color: #fff; }

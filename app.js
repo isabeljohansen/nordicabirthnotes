@@ -208,6 +208,7 @@ async function loadBoard(boardId) {
   if (currentBoard && currentBoard.id === boardId) return; // already showing (or loading) it
 
   const seq = ++loadSeq;
+  selectedCardId = null;
   currentBoard = target;
   localStorage.setItem(LAST_BOARD_KEY, boardId);
 
@@ -255,7 +256,13 @@ function buildToolbar() {
     btn.innerHTML = def.icon;
     btn.title = def.label;
     btn.setAttribute('aria-label', 'Add ' + def.label.toLowerCase());
-    btn.addEventListener('click', () => addCard(type));
+    btn.addEventListener('click', () => {
+      // End editing wherever it is, right now: some browsers don't move focus when a
+      // button is clicked, and typing would otherwise still go to the old card.
+      const active = document.activeElement;
+      if (active && isEditingField(active)) active.blur();
+      addCard(type, { edit: true });
+    });
     els.toolbar.appendChild(btn);
     if (TOOLBAR_DIVIDE_AFTER.has(type)) {
       const divider = document.createElement('span');
@@ -270,6 +277,7 @@ function buildToolbar() {
 // repeated toolbar clicks don't stack perfectly on top of each other.
 // opts.data merges over the type's default data (used to pre-fill a dropped file).
 // opts.size overrides the type's default {w, h} (used to fit pasted text).
+const CARDS_TYPED_INTO = new Set(['notepad', 'comment', 'checklist', 'table']);
 async function addCard(type, opts = {}) {
   if (!currentBoard) return;
   const def = CARD_TYPES[type];
@@ -293,9 +301,27 @@ async function addCard(type, opts = {}) {
     data: { ...def.createData(), ...(opts.data || {}) },
     createdAt: Date.now(),
   };
+  // Show it (and, for text cards, put the cursor in it) straight away, then save in the
+  // background. Waiting for the save first meant anything typed in that gap went to
+  // whatever card had the cursor before. Saves for a card are ordered, so this is safe.
   cards.set(card.id, card);
-  await db.putCard(card);
   renderCard(card);
+  selectCard(card);
+  if (opts.edit && CARDS_TYPED_INTO.has(type)) {
+    const field = cardEls.get(card.id)?.querySelector('[contenteditable]');
+    if (field) field.focus();
+  }
+  try {
+    await db.putCard(card);
+  } catch (err) {
+    const el = cardEls.get(card.id);
+    if (el) el.remove();
+    cards.delete(card.id);
+    cardEls.delete(card.id);
+    if (selectedCardId === card.id) selectedCardId = null;
+    showToast("Couldn't add that: " + (err.message || err));
+    return null;
+  }
   return card;
 }
 
@@ -315,7 +341,7 @@ async function addFileCard(file, point) {
 
 const escapeHtml = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function showToast(message) {
+function showToast(message, action) {
   let toast = document.getElementById('toast');
   if (!toast) {
     toast = document.createElement('div');
@@ -323,9 +349,20 @@ function showToast(message) {
     document.body.appendChild(toast);
   }
   toast.textContent = message;
+  toast.classList.toggle('has-action', !!action);
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      toast.classList.remove('show');
+      action.onClick();
+    });
+    toast.appendChild(btn);
+  }
   toast.classList.add('show');
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove('show'), 4500);
+  showToast.timer = setTimeout(() => toast.classList.remove('show'), action ? 8000 : 4500);
 }
 
 // Pasted text becomes a video card (YouTube/Vimeo link), a link card (any other
@@ -429,6 +466,10 @@ const ctx = {
   },
 };
 
+const TRASH_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+
 function renderCard(card) {
   const def = CARD_TYPES[card.type];
   const el = document.createElement('div');
@@ -439,20 +480,6 @@ function renderCard(card) {
   el.style.height = card.h + 'px';
   el.style.zIndex = card.zIndex || 1;
 
-  const handle = document.createElement('div');
-  handle.className = 'card-handle';
-  const iconLabel = document.createElement('span');
-  iconLabel.className = 'card-handle-icon';
-  iconLabel.innerHTML = def.icon;
-  iconLabel.title = def.label;
-  const delBtn = document.createElement('button');
-  delBtn.className = 'card-delete';
-  delBtn.textContent = '×';
-  delBtn.title = 'Delete card';
-  delBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
-  confirmClick(delBtn, '✓', () => deleteCard(card));
-  handle.append(iconLabel, delBtn);
-
   const body = document.createElement('div');
   body.className = 'card-body';
 
@@ -461,18 +488,36 @@ function renderCard(card) {
   const resizeHandle = card.type === 'comment' ? null : document.createElement('div');
   if (resizeHandle) resizeHandle.className = 'resize-handle';
 
-  el.append(handle, body);
+  // No banner on cards. The only chrome is this small trash button, and it only shows
+  // while the card is selected (it's the way to delete without a keyboard, e.g. on a phone).
+  const trash = document.createElement('button');
+  trash.type = 'button';
+  trash.className = 'card-trash';
+  trash.title = 'Delete (or press the Delete key)';
+  trash.setAttribute('aria-label', 'Delete');
+  trash.innerHTML = TRASH_ICON;
+  trash.addEventListener('click', () => removeCard(card));
+
+  el.appendChild(body);
   if (resizeHandle) el.appendChild(resizeHandle);
+  el.appendChild(trash);
   els.world.appendChild(el);
   cardEls.set(card.id, el);
 
   def.render(card, body, ctx);
 
-  wireCardDrag(card, el, handle);
   if (resizeHandle) wireCardResize(card, el, resizeHandle, { lockAspect: card.type === 'image' });
-  if (card.type === 'comment' || card.type === 'image') wireBodyDrag(card, el, body);
+  wireBodyDrag(card, el, body);
 
-  el.addEventListener('pointerdown', () => bringToFront(card, el));
+  // Any press on the card (capture phase, so nothing inside can swallow it) selects it,
+  // brings it to the front, and ends editing in any other text field.
+  el.addEventListener('pointerdown', (e) => {
+    pressedOnSelected = selectedCardId === card.id;
+    const active = document.activeElement;
+    if (active && isEditingField(active) && !active.contains(e.target)) active.blur();
+    selectCard(card);
+    bringToFront(card, el);
+  }, true);
 }
 
 function bringToFront(card, el) {
@@ -528,32 +573,12 @@ function trackDrag(e, target, { onMove, onEnd }) {
   endActiveDrag = end;
 }
 
-function wireCardDrag(card, el, handle) {
-  handle.addEventListener('pointerdown', (e) => {
-    if (!isPrimaryPress(e)) return;
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const originX = card.x;
-    const originY = card.y;
-
-    trackDrag(e, handle, {
-      onMove(ev) {
-        card.x = originX + (ev.clientX - startX) / view.scale;
-        card.y = originY + (ev.clientY - startY) / view.scale;
-        el.style.left = card.x + 'px';
-        el.style.top = card.y + 'px';
-      },
-      onEnd() { db.putCard(card); },
-    });
-  });
-}
-
-// Comment and image cards have no visible handle bar, so the whole body is the
-// grab area. We preventDefault on pointerdown so the browser never starts its
-// own native text-selection/image drag (which would otherwise fight our own
-// drag logic); for comments, a plain click (no movement past the threshold)
-// manually places the caret instead, so clicking to edit still works normally.
+// Cards have no handle bar: press anywhere on a card that isn't a real control and
+// drag to move it. We preventDefault on pointerdown so the browser never starts its
+// own text-selection/image drag, which would fight our drag. Text works in two steps:
+// the first click selects the card (so you can drag it or press Delete), and clicking
+// the text of an already-selected card starts editing it. Once you're editing, presses
+// inside that text field are left alone so normal text selection and caret movement work.
 const DRAG_THRESHOLD = 5;
 function placeCaretAt(editor, x, y) {
   editor.focus();
@@ -575,13 +600,17 @@ function placeCaretAt(editor, x, y) {
   }
 }
 
+// Things that must keep their own behaviour when clicked: buttons, form fields, links,
+// the audio player, iframes and canvases. Everything else on a card is surface to grab.
+const NATIVE_CONTROLS = 'button, input, select, textarea, audio, a[href], iframe, canvas';
+const isNativeControl = (node) => !!(node.closest && node.closest(NATIVE_CONTROLS));
+
 function wireBodyDrag(card, el, body) {
   body.addEventListener('pointerdown', (e) => {
-    // Let native controls (e.g. the image card's hidden file-picker input
-    // before an image is chosen) behave normally instead of being hijacked.
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-    if (!isPrimaryPress(e)) return;
-    const editor = body.querySelector('[contenteditable]');
+    if (!isPrimaryPress(e) || isNativeControl(e.target)) return;
+    const editable = e.target.closest('[contenteditable]');
+    if (editable && document.activeElement === editable) return; // already editing: native text editing
+    const wasSelected = pressedOnSelected;
     e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
@@ -605,8 +634,8 @@ function wireBodyDrag(card, el, body) {
       onEnd(ev) {
         if (dragging) {
           db.putCard(card);
-        } else if (editor && ev.type === 'pointerup') {
-          placeCaretAt(editor, ev.clientX, ev.clientY);
+        } else if (editable && wasSelected && ev.type === 'pointerup') {
+          placeCaretAt(editable, ev.clientX, ev.clientY);
         }
       },
     });
@@ -655,14 +684,103 @@ async function cleanupCardBlobs(card) {
   }
 }
 
-async function deleteCard(card) {
-  await cleanupCardBlobs(card);
-  await db.deleteCard(card.id);
+// ---------- Selection, delete key, undo ----------
+
+let selectedCardId = null;
+let pressedOnSelected = false; // was the card already selected when the current press began?
+
+function selectCard(card) {
+  const next = card ? card.id : null;
+  if (selectedCardId === next) return;
+  if (selectedCardId) {
+    const prev = cardEls.get(selectedCardId);
+    if (prev) prev.classList.remove('selected');
+  }
+  selectedCardId = next;
+  if (next) cardEls.get(next)?.classList.add('selected');
+}
+
+const isEditingField = (node) => !!(node && node.closest && node.closest('[contenteditable], input, textarea, select'));
+
+// A deleted card stays recoverable for a while: it's gone from the board and the database
+// straight away, but its uploaded file is only discarded once the undo window has passed.
+const UNDO_WINDOW_MS = 15000;
+const deletedCards = [];
+
+async function removeCard(card) {
   const el = cardEls.get(card.id);
   if (el) el.remove();
   cards.delete(card.id);
   cardEls.delete(card.id);
+  if (selectedCardId === card.id) selectedCardId = null;
+
+  const entry = { card, deleting: null, timer: null };
+  entry.timer = setTimeout(() => {
+    const i = deletedCards.indexOf(entry);
+    if (i >= 0) deletedCards.splice(i, 1);
+    cleanupCardBlobs(card).catch(() => {});
+  }, UNDO_WINDOW_MS);
+  deletedCards.push(entry);
+  showToast('Deleted', { label: 'Undo', onClick: undoDelete });
+
+  entry.deleting = db.deleteCard(card.id);
+  try {
+    await entry.deleting;
+  } catch (err) {
+    // The database refused: don't pretend it's gone.
+    clearTimeout(entry.timer);
+    const i = deletedCards.indexOf(entry);
+    if (i >= 0) deletedCards.splice(i, 1);
+    if (currentBoard && card.boardId === currentBoard.id) {
+      cards.set(card.id, card);
+      renderCard(card);
+    }
+    showToast("Couldn't delete that: " + (err.message || err));
+  }
 }
+
+async function undoDelete() {
+  const entry = deletedCards.pop();
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  const card = entry.card;
+  try {
+    await entry.deleting; // make sure the delete has landed before putting the row back
+  } catch (err) {
+    return;
+  }
+  await db.putCard(card);
+  if (currentBoard && card.boardId === currentBoard.id) {
+    cards.set(card.id, card);
+    renderCard(card);
+    selectCard(card);
+  }
+  showToast('Restored');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (els.appRoot.classList.contains('hidden') || !currentBoard) return;
+  const editing = isEditingField(document.activeElement);
+  if (e.key === 'Escape') {
+    if (editing) document.activeElement.blur(); // stop editing, card stays selected
+    else selectCard(null);
+    return;
+  }
+  if (editing) return; // Delete/Backspace/Cmd+Z belong to the text being edited
+  // Backspace counts too: on a Mac the key labelled "delete" sends Backspace.
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedCardId) {
+    const card = cards.get(selectedCardId);
+    if (card) {
+      e.preventDefault();
+      removeCard(card);
+    }
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && deletedCards.length) {
+    e.preventDefault();
+    undoDelete();
+  }
+});
 
 // ---------- Pan & zoom ----------
 
@@ -670,6 +788,9 @@ function wireGlobalEvents() {
   els.viewport.addEventListener('pointerdown', (e) => {
     if (e.target !== els.viewport && e.target !== els.world) return;
     if (!isPrimaryPress(e)) return;
+    selectCard(null);
+    const active = document.activeElement;
+    if (active && isEditingField(active)) active.blur();
     els.viewport.classList.add('panning');
     const startX = e.clientX;
     const startY = e.clientY;
