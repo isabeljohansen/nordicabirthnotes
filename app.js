@@ -483,30 +483,69 @@ function bringToFront(card, el) {
   db.putCard(card);
 }
 
+// Only a plain left-button press starts a drag. On a Mac, Ctrl+click and a two-finger
+// click open the right-click menu, which swallows the "button released" event; a drag
+// begun from one of those never ends and keeps following the mouse.
+const isPrimaryPress = (e) => e.button === 0 && !e.ctrlKey;
+
+// Runs one pointer drag, from the press that started it until the button is released.
+// Listens on the window and ends on pointerup, pointercancel, lost capture, the window
+// losing focus, OR any pointer move that arrives with no button held. That last one is
+// the safety net: if a "button released" event is ever missed (it happens on some
+// trackpads and browsers), the drag still ends on the next mouse move instead of
+// staying stuck to the cursor and resizing or moving a card on every move afterwards.
+let endActiveDrag = null;
+function trackDrag(e, target, { onMove, onEnd }) {
+  if (endActiveDrag) endActiveDrag({ type: 'superseded' }); // never two drags at once
+  const id = e.pointerId;
+  try { target.setPointerCapture(id); } catch (_) { /* pointer already gone */ }
+  let finished = false;
+
+  const move = (ev) => {
+    if (ev.pointerId !== id) return;
+    if (ev.buttons === 0) { end(ev); return; }
+    onMove(ev);
+  };
+  const up = (ev) => { if (ev.pointerId === id) end(ev); };
+  const end = (ev) => {
+    if (finished) return;
+    finished = true;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    window.removeEventListener('blur', end);
+    target.removeEventListener('lostpointercapture', end);
+    if (endActiveDrag === end) endActiveDrag = null;
+    try { target.releasePointerCapture(id); } catch (_) { /* already released */ }
+    onEnd(ev);
+  };
+
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+  window.addEventListener('blur', end);
+  target.addEventListener('lostpointercapture', end);
+  endActiveDrag = end;
+}
+
 function wireCardDrag(card, el, handle) {
   handle.addEventListener('pointerdown', (e) => {
+    if (!isPrimaryPress(e)) return;
     e.stopPropagation();
-    handle.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startY = e.clientY;
     const originX = card.x;
     const originY = card.y;
 
-    function onMove(ev) {
-      const dx = (ev.clientX - startX) / view.scale;
-      const dy = (ev.clientY - startY) / view.scale;
-      card.x = originX + dx;
-      card.y = originY + dy;
-      el.style.left = card.x + 'px';
-      el.style.top = card.y + 'px';
-    }
-    function onUp() {
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onUp);
-      db.putCard(card);
-    }
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp);
+    trackDrag(e, handle, {
+      onMove(ev) {
+        card.x = originX + (ev.clientX - startX) / view.scale;
+        card.y = originY + (ev.clientY - startY) / view.scale;
+        el.style.left = card.x + 'px';
+        el.style.top = card.y + 'px';
+      },
+      onEnd() { db.putCard(card); },
+    });
   });
 }
 
@@ -541,45 +580,43 @@ function wireBodyDrag(card, el, body) {
     // Let native controls (e.g. the image card's hidden file-picker input
     // before an image is chosen) behave normally instead of being hijacked.
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+    if (!isPrimaryPress(e)) return;
     const editor = body.querySelector('[contenteditable]');
     e.preventDefault();
-    body.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startY = e.clientY;
     const originX = card.x;
     const originY = card.y;
     let dragging = false;
 
-    function onMove(ev) {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      if (!dragging) {
-        if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
-        dragging = true;
-      }
-      card.x = originX + dx / view.scale;
-      card.y = originY + dy / view.scale;
-      el.style.left = card.x + 'px';
-      el.style.top = card.y + 'px';
-    }
-    function onUp(ev) {
-      body.removeEventListener('pointermove', onMove);
-      body.removeEventListener('pointerup', onUp);
-      if (dragging) {
-        db.putCard(card);
-      } else if (editor) {
-        placeCaretAt(editor, ev.clientX, ev.clientY);
-      }
-    }
-    body.addEventListener('pointermove', onMove);
-    body.addEventListener('pointerup', onUp);
+    trackDrag(e, body, {
+      onMove(ev) {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (!dragging) {
+          if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+          dragging = true;
+        }
+        card.x = originX + dx / view.scale;
+        card.y = originY + dy / view.scale;
+        el.style.left = card.x + 'px';
+        el.style.top = card.y + 'px';
+      },
+      onEnd(ev) {
+        if (dragging) {
+          db.putCard(card);
+        } else if (editor && ev.type === 'pointerup') {
+          placeCaretAt(editor, ev.clientX, ev.clientY);
+        }
+      },
+    });
   });
 }
 
 function wireCardResize(card, el, handle, opts = {}) {
   handle.addEventListener('pointerdown', (e) => {
+    if (!isPrimaryPress(e)) return;
     e.stopPropagation();
-    handle.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startY = e.clientY;
     const originW = card.w;
@@ -587,31 +624,27 @@ function wireCardResize(card, el, handle, opts = {}) {
     const ratio = originW / originH;
     if (opts.lockAspect) card.data.sized = true;
 
-    function onMove(ev) {
-      const dx = (ev.clientX - startX) / view.scale;
-      const dy = (ev.clientY - startY) / view.scale;
-      if (opts.lockAspect) {
-        // Project the drag onto the box's own diagonal so resizing (from any
-        // direction off the corner) always keeps the original aspect ratio —
-        // this is what makes it feel like resizing the image itself, not a
-        // separately-shaped frame around it.
-        const t = (dx * ratio + dy) / (ratio * ratio + 1);
-        card.w = Math.max(30, originW + t * ratio);
-        card.h = card.w / ratio;
-      } else {
-        card.w = Math.max(100, originW + dx);
-        card.h = Math.max(60, originH + dy);
-      }
-      el.style.width = card.w + 'px';
-      el.style.height = card.h + 'px';
-    }
-    function onUp() {
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onUp);
-      db.putCard(card);
-    }
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp);
+    trackDrag(e, handle, {
+      onMove(ev) {
+        const dx = (ev.clientX - startX) / view.scale;
+        const dy = (ev.clientY - startY) / view.scale;
+        if (opts.lockAspect) {
+          // Project the drag onto the box's own diagonal so resizing (from any
+          // direction off the corner) always keeps the original aspect ratio —
+          // this is what makes it feel like resizing the image itself, not a
+          // separately-shaped frame around it.
+          const t = (dx * ratio + dy) / (ratio * ratio + 1);
+          card.w = Math.max(30, originW + t * ratio);
+          card.h = card.w / ratio;
+        } else {
+          card.w = Math.max(100, originW + dx);
+          card.h = Math.max(60, originH + dy);
+        }
+        el.style.width = card.w + 'px';
+        el.style.height = card.h + 'px';
+      },
+      onEnd() { db.putCard(card); },
+    });
   });
 }
 
@@ -636,26 +669,24 @@ async function deleteCard(card) {
 function wireGlobalEvents() {
   els.viewport.addEventListener('pointerdown', (e) => {
     if (e.target !== els.viewport && e.target !== els.world) return;
+    if (!isPrimaryPress(e)) return;
     els.viewport.classList.add('panning');
-    els.viewport.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startY = e.clientY;
     const originX = view.x;
     const originY = view.y;
 
-    function onMove(ev) {
-      view.x = originX + (ev.clientX - startX);
-      view.y = originY + (ev.clientY - startY);
-      applyView();
-    }
-    function onUp() {
-      els.viewport.classList.remove('panning');
-      els.viewport.removeEventListener('pointermove', onMove);
-      els.viewport.removeEventListener('pointerup', onUp);
-      persistView();
-    }
-    els.viewport.addEventListener('pointermove', onMove);
-    els.viewport.addEventListener('pointerup', onUp);
+    trackDrag(e, els.viewport, {
+      onMove(ev) {
+        view.x = originX + (ev.clientX - startX);
+        view.y = originY + (ev.clientY - startY);
+        applyView();
+      },
+      onEnd() {
+        els.viewport.classList.remove('panning');
+        persistView();
+      },
+    });
   });
 
   els.viewport.addEventListener('wheel', (e) => {
