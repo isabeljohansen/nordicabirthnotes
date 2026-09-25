@@ -416,7 +416,7 @@ svg { display: block; }
 .card-comment .card-body { padding-top: 2px; overflow: hidden; }
 
 /* Image cards are frameless: no border, no banner, edge-to-edge */
-.card-image { background: transparent; border: none; box-shadow: none; border-radius: 0; }
+.card-image { background: transparent; border: none; box-shadow: none; border-radius: 0; min-width: 30px; min-height: 30px; }
 .card-image .card-handle {
   position: absolute;
   top: 0; left: 0; right: 0;

@@ -1,5 +1,5 @@
 import { db, auth, uid } from './db.js';
-import { CARD_TYPES, revokeBlobUrl } from './cardTypes.js';
+import { CARD_TYPES, revokeBlobUrl, primeBlobUrl } from './cardTypes.js';
 
 const LAST_BOARD_KEY = 'midwife-board:lastBoardId';
 
@@ -278,6 +278,7 @@ async function addCard(type, opts = {}) {
 async function addImageCardFromFile(file, worldX, worldY) {
   const blobId = uid();
   await db.putBlob(blobId, file, { filename: file.name, mimeType: file.type });
+  primeBlobUrl(blobId, file);
   await addCard('image', { center: { x: worldX, y: worldY }, data: { blobId, filename: file.name } });
 }
 
@@ -362,6 +363,8 @@ function renderCard(card) {
 }
 
 function bringToFront(card, el) {
+  const alreadyOnTop = [...cards.values()].every((c) => c === card || c.zIndex < card.zIndex);
+  if (alreadyOnTop) return;
   card.zIndex = ++maxZ;
   el.style.zIndex = card.zIndex;
   db.putCard(card);
@@ -469,6 +472,7 @@ function wireCardResize(card, el, handle, opts = {}) {
     const originW = card.w;
     const originH = card.h;
     const ratio = originW / originH;
+    if (opts.lockAspect) card.data.sized = true;
 
     function onMove(ev) {
       const dx = (ev.clientX - startX) / view.scale;

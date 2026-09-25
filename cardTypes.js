@@ -12,6 +12,12 @@ export async function getBlobUrl(blobId) {
   return url;
 }
 
+// Show a file the user just added straight from memory, instead of downloading
+// the copy we just uploaded (slow for big photos, and the card would sit empty).
+export function primeBlobUrl(blobId, blob) {
+  if (!objectUrlCache.has(blobId)) objectUrlCache.set(blobId, URL.createObjectURL(blob));
+}
+
 export function revokeBlobUrl(blobId) {
   const url = objectUrlCache.get(blobId);
   if (url) {
@@ -317,6 +323,7 @@ export const CARD_TYPES = {
         body.appendChild(makeFilePicker('image/*', async (file) => {
           const blobId = uid();
           await db.putBlob(blobId, file, { filename: file.name, mimeType: file.type });
+          primeBlobUrl(blobId, file);
           ctx.saveData(card, { blobId, filename: file.name });
           ctx.rerender(card);
         }));
@@ -333,8 +340,10 @@ export const CARD_TYPES = {
         if (!nw || !nh) return;
         const maxDim = 340;
         const scale = Math.min(1, maxDim / Math.max(nw, nh));
+        // Flag first, so the single save below carries both the size and "fitted";
+        // saved separately, a lost flag would make the image re-fit on every load.
+        card.data.sized = true;
         ctx.setCardSize(card, Math.round(nw * scale), Math.round(nh * scale));
-        ctx.saveData(card, { sized: true });
       };
       getBlobUrl(card.data.blobId).then((url) => {
         if (url) img.src = url;
@@ -353,6 +362,7 @@ export const CARD_TYPES = {
         body.appendChild(makeFilePicker('*/*', async (file) => {
           const blobId = uid();
           await db.putBlob(blobId, file, { filename: file.name, mimeType: file.type });
+          primeBlobUrl(blobId, file);
           ctx.saveData(card, { blobId, filename: file.name, mimeType: file.type });
           ctx.rerender(card);
         }));
@@ -383,6 +393,7 @@ export const CARD_TYPES = {
         body.appendChild(makeFilePicker('audio/*', async (file) => {
           const blobId = uid();
           await db.putBlob(blobId, file, { filename: file.name, mimeType: file.type });
+          primeBlobUrl(blobId, file);
           ctx.saveData(card, { blobId, filename: file.name });
           ctx.rerender(card);
         }));

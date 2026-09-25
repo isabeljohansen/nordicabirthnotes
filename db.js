@@ -53,6 +53,39 @@ async function currentUserId() {
   return data.user.id;
 }
 
+// Saves for the same row go out one at a time, always carrying the row's LATEST
+// state. Dragging, resizing and bumping a card to the front all fire saves without
+// waiting for each other; sent in parallel, an older save can land last and quietly
+// revert a newer edit (an image "resizing itself" back to an earlier size).
+const writeQueues = new Map();
+
+function saveLatest(table, id, toRow) {
+  const key = `${table}:${id}`;
+  const q = writeQueues.get(key) || { chain: Promise.resolve(), pending: false, cancelled: false };
+  writeQueues.set(key, q);
+  if (q.pending) return q.chain; // not started yet — it will pick up the newest state anyway
+  q.pending = true;
+  q.chain = q.chain.catch(() => {}).then(async () => {
+    q.pending = false;
+    if (q.cancelled) return;
+    const { error } = await client.from(table).upsert(toRow());
+    check(error);
+  });
+  return q.chain;
+}
+
+async function deleteRow(table, id) {
+  const key = `${table}:${id}`;
+  const q = writeQueues.get(key);
+  if (q) {
+    q.cancelled = true; // a save still waiting must not resurrect the row
+    await q.chain.catch(() => {});
+  }
+  const { error } = await client.from(table).delete().eq('id', id);
+  check(error);
+  writeQueues.delete(key);
+}
+
 export const db = {
   // Boards
   async getAllBoards() {
@@ -61,12 +94,10 @@ export const db = {
     return data.map(rowToBoard);
   },
   async putBoard(board) {
-    const { error } = await client.from('boards').upsert(boardToRow(board));
-    check(error);
+    await saveLatest('boards', board.id, () => boardToRow(board));
   },
   async deleteBoard(id) {
-    const { error } = await client.from('boards').delete().eq('id', id);
-    check(error);
+    await deleteRow('boards', id);
   },
 
   // Cards
@@ -76,12 +107,10 @@ export const db = {
     return data.map(rowToCard);
   },
   async putCard(card) {
-    const { error } = await client.from('cards').upsert(cardToRow(card));
-    check(error);
+    await saveLatest('cards', card.id, () => cardToRow(card));
   },
   async deleteCard(id) {
-    const { error } = await client.from('cards').delete().eq('id', id);
-    check(error);
+    await deleteRow('cards', id);
   },
 
   // Blobs (files) — stored in Supabase Storage under <userId>/<blobId>, a
