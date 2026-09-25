@@ -414,7 +414,10 @@ svg { display: block; }
 .card-comment .card-handle { padding-right: 10px; justify-content: flex-end; }
 .card-comment .card-delete { opacity: 0; }
 .card-comment:hover .card-delete { opacity: 0.6; }
-.card-comment .card-body { padding: 0 16px 12px; overflow: hidden; }
+/* Tuned by measuring the visible letters, not the invisible line boxes: about 21px of
+   clear space on every side. The bottom padding is smaller than the sides on paper because
+   the gap you see below the last line already includes the line's built-in spacing. */
+.card-comment .card-body { padding: 0 20px 16px; overflow: hidden; }
 /* The editor must be exactly as tall as its text (no stretching to fill the body),
    or the bubble can't measure how much room the text really needs. */
 .card-comment .comment-editor { min-height: 0; }

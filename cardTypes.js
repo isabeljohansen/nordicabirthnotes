@@ -95,7 +95,7 @@ export const CARD_TYPES = {
 
   comment: {
     label: 'Comment', icon: ICONS.comment,
-    defaultSize: { w: 200, h: 60 },
+    defaultSize: { w: 220, h: 60 },
     createData: () => ({ text: '' }),
     render(card, body, ctx) {
       body.innerHTML = '';
@@ -103,17 +103,20 @@ export const CARD_TYPES = {
       editor.innerText = card.data.text || '';
       editor.setAttribute('data-placeholder', 'Add a comment…');
 
-      // Comments have no resize handle — height always fits the text. The gap
-      // between card.h and the body's own rendered height (handle bar, padding,
-      // border) is measured live rather than hardcoded, so it stays correct if
-      // that CSS ever changes.
+      // Comments have no resize handle — height always fits the text. Everything around
+      // the text (handle strip, border, the body's own padding) is measured live rather
+      // than hardcoded, so it stays right if that CSS changes. Layout sizes (offsetHeight,
+      // scrollHeight) are used on purpose: getBoundingClientRect shrinks/grows with the
+      // board's zoom level and would make the bubble the wrong height unless zoom is 100%.
       function fitHeight() {
-        const overhead = card.h - body.getBoundingClientRect().height;
+        const cs = getComputedStyle(body);
+        const bodyPadding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const chrome = card.h - body.offsetHeight + bodyPadding;
         // +2px safety margin: without it, a sub-pixel shortfall can make the
         // browser think the content overflows by a hair, which (even with
         // scrolling off) auto-scrolls to keep the caret visible and clips the
         // top line.
-        const needed = Math.max(46, Math.ceil(editor.scrollHeight + overhead) + 2);
+        const needed = Math.max(46, Math.ceil(editor.scrollHeight + chrome) + 2);
         if (Math.abs(needed - card.h) > 1) ctx.setCardSize(card, card.w, needed);
       }
 
@@ -125,6 +128,10 @@ export const CARD_TYPES = {
       // body itself is draggable, handled by wireBodyDrag in app.js.
       body.appendChild(editor);
       fitHeight();
+      // Re-measure whenever the text changes size on its own, e.g. when the web font
+      // finishes loading after the bubble was first measured with a fallback font
+      // (different letter widths => different wrapping => wrong height).
+      new ResizeObserver(fitHeight).observe(editor);
     },
   },
 
