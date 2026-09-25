@@ -36,7 +36,7 @@ function el(tag, className, attrs = {}) {
   return node;
 }
 
-function parseVideoUrl(url) {
+export function parseVideoUrl(url) {
   try {
     const u = new URL(url);
     if (u.hostname.includes('youtube.com')) {

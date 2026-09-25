@@ -1,5 +1,5 @@
 import { db, auth, uid } from './db.js';
-import { CARD_TYPES, revokeBlobUrl, primeBlobUrl } from './cardTypes.js';
+import { CARD_TYPES, revokeBlobUrl, primeBlobUrl, parseVideoUrl } from './cardTypes.js';
 
 const LAST_BOARD_KEY = 'midwife-board:lastBoardId';
 
@@ -247,9 +247,11 @@ function buildToolbar() {
 // omitted, it centers on the current viewport with a small random jitter so
 // repeated toolbar clicks don't stack perfectly on top of each other.
 // opts.data merges over the type's default data (used to pre-fill a dropped file).
+// opts.size overrides the type's default {w, h} (used to fit pasted text).
 async function addCard(type, opts = {}) {
   if (!currentBoard) return;
   const def = CARD_TYPES[type];
+  const size = opts.size || def.defaultSize;
   let center = opts.center;
   let jitter = 0;
   if (!center) {
@@ -261,10 +263,10 @@ async function addCard(type, opts = {}) {
     id: uid(),
     boardId: currentBoard.id,
     type,
-    x: center.x - def.defaultSize.w / 2 + (Math.random() * jitter - jitter / 2),
-    y: center.y - def.defaultSize.h / 2 + (Math.random() * jitter - jitter / 2),
-    w: def.defaultSize.w,
-    h: def.defaultSize.h,
+    x: center.x - size.w / 2 + (Math.random() * jitter - jitter / 2),
+    y: center.y - size.h / 2 + (Math.random() * jitter - jitter / 2),
+    w: size.w,
+    h: size.h,
     zIndex: ++maxZ,
     data: { ...def.createData(), ...(opts.data || {}) },
     createdAt: Date.now(),
@@ -275,12 +277,101 @@ async function addCard(type, opts = {}) {
   return card;
 }
 
-async function addImageCardFromFile(file, worldX, worldY) {
+// Any file becomes the matching card: images -> image, audio -> audio player,
+// everything else (PDFs, docs, ...) -> document.
+async function addFileCard(file, point) {
+  const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio' : 'document';
+  const filename = file.name || (kind === 'image' ? 'pasted-image.png' : 'pasted-file');
   const blobId = uid();
-  await db.putBlob(blobId, file, { filename: file.name, mimeType: file.type });
+  await db.putBlob(blobId, file, { filename, mimeType: file.type });
   primeBlobUrl(blobId, file);
-  await addCard('image', { center: { x: worldX, y: worldY }, data: { blobId, filename: file.name } });
+  const data = kind === 'document' ? { blobId, filename, mimeType: file.type } : { blobId, filename };
+  await addCard(kind, { center: point, data });
 }
+
+// ---------- Paste ----------
+
+const escapeHtml = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function showToast(message) {
+  let toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.remove('show'), 4500);
+}
+
+// Pasted text becomes a video card (YouTube/Vimeo link), a link card (any other
+// URL), or a notepad. It's always escaped, never inserted as HTML, so pasting
+// from a web page can't inject markup into a note.
+function cardForText(text) {
+  const t = text.trim();
+  if (/^(https?:\/\/|www\.)\S+$/i.test(t)) {
+    const url = /^https?:/i.test(t) ? t : 'https://' + t;
+    const embedUrl = parseVideoUrl(url);
+    if (embedUrl) return { type: 'video', data: { url, embedUrl } };
+    return { type: 'link', data: { url, title: '' } };
+  }
+  const lines = t.split(/\r?\n/).reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 36)), 0);
+  const h = Math.min(440, Math.max(110, Math.round(lines * 19.5 + 52)));
+  return { type: 'notepad', data: { html: escapeHtml(t).replace(/\r?\n/g, '<br>') }, size: { w: 280, h } };
+}
+
+// Paste where the cursor is if it's over the board, otherwise mid-screen. Pasting
+// again without moving the mouse steps each new card down-right, so they don't
+// pile up exactly on top of each other.
+let lastPointer = null;
+let lastPaste = null;
+function pastePoint() {
+  const rect = els.viewport.getBoundingClientRect();
+  const p = lastPointer;
+  const overBoard = p && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
+  const base = overBoard
+    ? screenToWorld(p.x - rect.left, p.y - rect.top)
+    : screenToWorld(rect.width / 2, rect.height / 2);
+  if (lastPaste && Math.hypot(base.x - lastPaste.base.x, base.y - lastPaste.base.y) < 8) {
+    lastPaste.count += 1;
+  } else {
+    lastPaste = { base, count: 0 };
+  }
+  return { x: base.x + lastPaste.count * 30, y: base.y + lastPaste.count * 30 };
+}
+
+async function addFromClipboard(files, text) {
+  let point = pastePoint();
+  const nudge = () => { point = { x: point.x + 30, y: point.y + 30 }; };
+  if (files.length) {
+    for (const file of files) {
+      await addFileCard(file, point);
+      nudge();
+    }
+    lastPaste.count += files.length - 1;
+    return;
+  }
+  const { type, data, size } = cardForText(text);
+  await addCard(type, { center: point, data, size });
+}
+
+document.addEventListener('paste', (e) => {
+  if (els.appRoot.classList.contains('hidden') || !currentBoard) return;
+  // Pasting into a note, comment, checklist item, table cell or text field
+  // should just paste text there, as usual.
+  const target = e.target instanceof Element ? e.target : document.body;
+  if (target.closest('[contenteditable], input, textarea')) return;
+  const cd = e.clipboardData;
+  if (!cd) return;
+  // Read everything now: the clipboard is only readable during this event.
+  const files = Array.from(cd.files || []);
+  const text = cd.getData('text/plain') || '';
+  if (!files.length && !text.trim()) return;
+  e.preventDefault();
+  addFromClipboard(files, text).catch((err) => showToast("Couldn't paste that: " + (err.message || err)));
+});
 
 // ---------- Card rendering ----------
 
@@ -572,23 +663,29 @@ function wireGlobalEvents() {
     persistView();
   });
 
-  // Drag an image in from Finder/another app/browser tab and drop it onto the board.
+  // Drag files in from Finder, another app, or a browser tab and drop them onto the board.
   els.viewport.addEventListener('dragover', (e) => {
     if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   });
   els.viewport.addEventListener('drop', async (e) => {
-    const files = e.dataTransfer && Array.from(e.dataTransfer.files || []).filter((f) => f.type.startsWith('image/'));
-    if (!files || files.length === 0) return;
+    const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
+    if (files.length === 0) return;
     e.preventDefault();
     const rect = els.viewport.getBoundingClientRect();
     let point = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-    for (const file of files) {
-      await addImageCardFromFile(file, point.x, point.y);
-      point = { x: point.x + 30, y: point.y + 30 };
+    try {
+      for (const file of files) {
+        await addFileCard(file, point);
+        point = { x: point.x + 30, y: point.y + 30 };
+      }
+    } catch (err) {
+      showToast("Couldn't add that file: " + (err.message || err));
     }
   });
+
+  window.addEventListener('pointermove', (e) => { lastPointer = { x: e.clientX, y: e.clientY }; });
 }
 
 function zoomBy(factor) {

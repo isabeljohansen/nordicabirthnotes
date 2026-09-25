@@ -120,7 +120,7 @@ export const db = {
     const uidPrefix = await currentUserId();
     const { error } = await client.storage
       .from(BLOBS_BUCKET)
-      .upload(`${uidPrefix}/${id}`, blob, { contentType: meta.mimeType || blob.type, upsert: true });
+      .upload(`${uidPrefix}/${id}`, blob, { contentType: meta.mimeType || blob.type || 'application/octet-stream', upsert: true });
     check(error);
   },
   async getBlob(id) {
