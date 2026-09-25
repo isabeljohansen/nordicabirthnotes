@@ -563,7 +563,11 @@ svg { display: block; }
   cursor: default;
   z-index: 5;
 }
-.card:has(.notepad-editor:focus) .format-bar { display: flex; }
+.card:has(.notepad-editor:focus, .format-link-input:focus) .format-bar { display: flex; }
+.format-link-input { display: none; width: 210px; height: 26px; padding: 0 8px; border: 1px solid var(--accent-deep); border-radius: 4px; font: 13px var(--sans); color: var(--ink); background: #fff; outline: none; }
+.format-bar.linking .format-btn { display: none; }
+.format-bar.linking .format-link-input { display: block; }
+.notepad-editor a { color: var(--accent-deep); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .format-btn {
   min-width: 28px;
   height: 26px;

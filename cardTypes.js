@@ -113,6 +113,66 @@ export const CARD_TYPES = {
       addBtn('B', 'Bold (Cmd+B)', () => document.execCommand('bold'), 'fb-b');
       addBtn('I', 'Italic (Cmd+I)', () => document.execCommand('italic'), 'fb-i');
       addBtn('&bull;', 'Bulleted list', () => document.execCommand('insertUnorderedList'), 'fb-list');
+
+      // Link button: turns the selected text into a link (or removes the link you're in).
+      // A small address box replaces the buttons because pop-up prompts aren't allowed.
+      const linkInput = el('input', 'format-link-input', { type: 'text', placeholder: 'Paste a link, press Enter' });
+      let savedRange = null;
+      const endLinking = () => { bar.classList.remove('linking'); linkInput.value = ''; };
+      const linkBtn = el('button', 'format-btn fb-link', { type: 'button', title: 'Link' });
+      linkBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>';
+      linkBtn.addEventListener('mousedown', (e) => e.preventDefault());
+      linkBtn.addEventListener('click', () => {
+        editor.focus();
+        const sel = window.getSelection();
+        const inLink = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement).closest('a');
+        if (inLink && editor.contains(inLink)) {
+          const r = document.createRange();
+          r.selectNodeContents(inLink);
+          sel.removeAllRanges(); sel.addRange(r);
+          document.execCommand('unlink');
+          return;
+        }
+        savedRange = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+        bar.classList.add('linking');
+        linkInput.focus();
+      });
+      const applyLink = () => {
+        let url = linkInput.value.trim();
+        endLinking();
+        if (!url) { editor.focus(); return; }
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = (url.includes('@') && !url.includes('/') ? 'mailto:' : 'https://') + url;
+        editor.focus();
+        const sel = window.getSelection();
+        if (savedRange) { sel.removeAllRanges(); sel.addRange(savedRange); }
+        if (sel.isCollapsed) {
+          const a = document.createElement('a');
+          a.href = url; a.textContent = url.replace(/^(https?:\/\/|mailto:)/, '');
+          document.execCommand('insertHTML', false, a.outerHTML);
+        } else {
+          document.execCommand('createLink', false, url);
+        }
+        editor.querySelectorAll('a').forEach((a) => { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      linkInput.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); applyLink(); }
+        else if (e.key === 'Escape') { e.preventDefault(); endLinking(); editor.focus(); }
+      });
+      linkInput.addEventListener('blur', () => { if (bar.classList.contains('linking')) endLinking(); });
+      bar.append(linkBtn, linkInput);
+
+      // Links open with a click when you're just reading, or Cmd/Ctrl+click while typing.
+      let wasEditing = false;
+      editor.addEventListener('pointerdown', () => { wasEditing = document.activeElement === editor; }, true);
+      editor.addEventListener('click', (e) => {
+        const a = e.target.closest && e.target.closest('a[href]');
+        if (a && (e.metaKey || e.ctrlKey || !wasEditing)) {
+          e.preventDefault();
+          window.open(a.href, '_blank', 'noopener');
+        }
+      });
       body.parentElement.appendChild(bar);
     },
   },
