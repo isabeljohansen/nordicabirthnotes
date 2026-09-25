@@ -7,11 +7,18 @@ const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const BLOBS_BUCKET = 'blobs';
 
+// Sub-boards need a `parent_id` column on the boards table (one SQL line; see schema.sql).
+// The column is only written when it's known to exist, so an un-updated database keeps
+// working exactly as before instead of failing every board save.
+let hasParentColumn = false;
+
 function boardToRow(board) {
-  return { id: board.id, name: board.name, created_at: new Date(board.createdAt).toISOString(), view: board.view ?? null };
+  const row = { id: board.id, name: board.name, created_at: new Date(board.createdAt).toISOString(), view: board.view ?? null };
+  if (hasParentColumn) row.parent_id = board.parentId ?? null;
+  return row;
 }
 function rowToBoard(row) {
-  return { id: row.id, name: row.name, createdAt: new Date(row.created_at).getTime(), view: row.view };
+  return { id: row.id, name: row.name, createdAt: new Date(row.created_at).getTime(), view: row.view, parentId: row.parent_id ?? null };
 }
 function cardToRow(card) {
   return {
@@ -91,7 +98,11 @@ export const db = {
   async getAllBoards() {
     const { data, error } = await client.from('boards').select('*');
     check(error);
+    hasParentColumn = data.some((row) => 'parent_id' in row);
     return data.map(rowToBoard);
+  },
+  supportsSubBoards() {
+    return hasParentColumn;
   },
   async putBoard(board) {
     await saveLatest('boards', board.id, () => boardToRow(board));

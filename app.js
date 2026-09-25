@@ -59,11 +59,12 @@ async function init() {
   initStarted = true;
   boards = await db.getAllBoards();
   if (boards.length === 0) {
-    const board = { id: uid(), name: 'My First Board', createdAt: Date.now(), view: null };
+    const board = { id: uid(), name: 'My First Board', createdAt: Date.now(), view: null, parentId: null };
     await db.putBoard(board);
     boards.push(board);
   }
   boards.sort((a, b) => a.createdAt - b.createdAt);
+  normalizeParents();
 
   const lastId = localStorage.getItem(LAST_BOARD_KEY);
   const initial = boards.find((b) => b.id === lastId) || boards[0];
@@ -104,61 +105,238 @@ function confirmClick(button, label, onConfirm) {
 
 // ---------- Sidebar ----------
 
+// Boards form a two-level tree: top-level boards, and sub-boards inside them. `boards` is
+// kept in tree order (a board followed by its sub-boards) and that order is saved in the
+// createdAt timestamps, so there's no separate "order" column to maintain.
+const COLLAPSED_KEY = 'midwife-board:collapsedBoards';
+let collapsed = new Set();
+try { collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch { /* ignore */ }
+function saveCollapsed() {
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch { /* ignore */ }
+}
+const subBoardsOn = () => db.supportsSubBoards();
+const kidsOf = (id) => boards.filter((b) => b.parentId === id);
+
+// A sub-board only counts if its parent exists and is itself top-level.
+function normalizeParents() {
+  for (const b of boards) {
+    const parent = b.parentId && boards.find((p) => p.id === b.parentId);
+    if (!subBoardsOn() || !parent || parent.parentId) b.parentId = null;
+  }
+}
+
 function renderSidebar() {
   els.boardList.innerHTML = '';
-  for (const board of boards) {
+  const drawRow = (board, isSub) => {
+    const kids = isSub ? [] : kidsOf(board.id);
     const item = document.createElement('div');
-    item.className = 'board-item' + (currentBoard && board.id === currentBoard.id ? ' active' : '');
+    item.className = 'board-item' + (isSub ? ' sub' : '') + (currentBoard && board.id === currentBoard.id ? ' active' : '');
+    item.dataset.id = board.id;
     item.title = 'Drag to reorder · double-click to rename';
+
+    const toggle = document.createElement('button');
+    toggle.className = 'board-item-toggle' + (kids.length ? '' : ' empty') + (collapsed.has(board.id) ? ' closed' : '');
+    toggle.innerHTML = kids.length ? '<svg viewBox="0 0 10 10" width="10" height="10"><path d="M3 1.5 7 5 3 8.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
+    toggle.tabIndex = kids.length ? 0 : -1;
+    toggle.setAttribute('aria-label', 'Show or hide sub-boards');
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!kids.length) return;
+      if (collapsed.has(board.id)) collapsed.delete(board.id); else collapsed.add(board.id);
+      saveCollapsed();
+      renderSidebar();
+    });
+
     const name = document.createElement('div');
     name.className = 'board-item-name';
     name.textContent = board.name;
     name.addEventListener('click', () => {
       if (!boardDragJustEnded) loadBoard(board.id);
     });
+
+    item.append(toggle, name);
+    if (!isSub && subBoardsOn()) {
+      const add = document.createElement('button');
+      add.className = 'board-item-add';
+      add.textContent = '+';
+      add.title = 'Add a sub-board inside this board';
+      add.addEventListener('click', (e) => { e.stopPropagation(); startAddSubBoard(board); });
+      item.appendChild(add);
+    }
     const del = document.createElement('button');
     del.className = 'board-item-del';
     del.textContent = '×';
-    del.title = 'Delete board';
+    del.title = kids.length ? 'Delete board (its sub-boards are kept)' : 'Delete board';
     confirmClick(del, 'Sure?', () => deleteBoard(board));
-    item.append(name, del);
+    item.appendChild(del);
     item.addEventListener('pointerdown', (e) => startBoardDrag(e, item));
     els.boardList.appendChild(item);
+  };
+  for (const board of boards.filter((b) => !b.parentId)) {
+    drawRow(board, false);
+    if (!collapsed.has(board.id)) kidsOf(board.id).forEach((kid) => drawRow(kid, true));
   }
+}
+
+// Open the parents of a board so it's visible in the sidebar.
+function revealBoard(board) {
+  if (board.parentId && collapsed.delete(board.parentId)) saveCollapsed();
+}
+
+function startAddSubBoard(parent) {
+  if (collapsed.delete(parent.id)) saveCollapsed();
+  renderSidebar();
+  const rows = [...els.boardList.querySelectorAll('.board-item')];
+  const last = rows.filter((r) => r.dataset.id === parent.id || boards.find((b) => b.id === r.dataset.id)?.parentId === parent.id).pop();
+  const form = document.createElement('div');
+  form.className = 'new-board-form sub';
+  const input = document.createElement('input');
+  input.className = 'new-board-input';
+  input.placeholder = 'Sub-board name…';
+  form.appendChild(input);
+  last.after(form);
+  input.focus();
+
+  let done = false;
+  async function commit() {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    form.remove();
+    if (!name) return;
+    const board = { id: uid(), name, createdAt: Date.now(), view: null, parentId: parent.id };
+    boards.push(board);
+    renderSidebar();
+    try {
+      await db.putBoard(board);
+    } catch (err) {
+      boards = boards.filter((b) => b !== board);
+      renderSidebar();
+      showToast("Couldn't create that sub-board: " + (err.message || err));
+      return;
+    }
+    await loadBoard(board.id);
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') commit();
+    if (e.key === 'Escape') { done = true; form.remove(); }
+  });
+  input.addEventListener('blur', commit);
 }
 
 // ---------- Reorder & rename boards ----------
 
-// Boards are listed oldest-first, so the order IS their creation timestamps. Rearranging
-// re-spaces those timestamps (keeping the new order) rather than adding a database column,
-// so there's nothing to migrate in Supabase and older copies of the app still read it fine.
-async function saveBoardOrder() {
+// Re-spaces the timestamps to match the current tree order. Only rows that actually
+// changed (order or parent) are written.
+async function saveBoardOrder(...alsoChanged) {
   const base = Math.min(...boards.map((b) => b.createdAt));
-  const changed = [];
+  const changed = new Set(alsoChanged);
   boards.forEach((b, i) => {
     const t = base + i * 1000;
     if (b.createdAt !== t) {
       b.createdAt = t;
-      changed.push(b);
+      changed.add(b);
     }
   });
   try {
-    await Promise.all(changed.map((b) => db.putBoard(b)));
+    await Promise.all([...changed].map((b) => db.putBoard(b)));
   } catch (err) {
     showToast("Couldn't save the new board order: " + (err.message || err));
   }
 }
 
-// Press and drag a board up or down the list. A plain click still opens the board.
+// Works out where a dragged board would land for a pointer at (x, y), or null.
+// Result: {type: 'before'|'after'|'afterGroup'|'into', ref: board}
+function computeDrop(dragged, groupRows, x, y) {
+  const canNest = subBoardsOn() && kidsOf(dragged.id).length === 0;
+  const rows = [...els.boardList.querySelectorAll('.board-item')].filter((r) => !groupRows.includes(r));
+  if (!rows.length) return null;
+  const boardOf = (row) => boards.find((b) => b.id === row.dataset.id);
+  const first = rows[0].getBoundingClientRect();
+  if (y < first.top) return { type: 'before', ref: boardOf(rows[0]), row: rows[0] };
+  let row = rows.find((r) => { const rc = r.getBoundingClientRect(); return y >= rc.top && y < rc.bottom; });
+  let atEnd = false;
+  if (!row) { row = rows[rows.length - 1]; atEnd = true; }
+  const rc = row.getBoundingClientRect();
+  const frac = atEnd ? 1 : (y - rc.top) / rc.height;
+  const target = boardOf(row);
+  const kids = kidsOf(target.id).filter((k) => !groupRows.some((g) => g.dataset.id === k.id));
+  const isLastKid = target.parentId && kidsOf(target.parentId).filter((k) => k.id !== dragged.id).pop() === target;
+
+  if (!target.parentId) {
+    if (!canNest) return frac < 0.5 ? { type: 'before', ref: target, row } : { type: 'afterGroup', ref: target, row };
+    if (frac < 0.3) return { type: 'before', ref: target, row };
+    if (frac <= 0.7 || (kids.length && !collapsed.has(target.id))) return { type: 'into', ref: target, row };
+    return { type: 'afterGroup', ref: target, row };
+  }
+  const parent = boards.find((b) => b.id === target.parentId);
+  if (!canNest) return { type: 'afterGroup', ref: parent, row };
+  if (frac < 0.5) return { type: 'before', ref: target, row };
+  if (isLastKid && x < rc.left + 30) return { type: 'afterGroup', ref: parent, row };
+  return { type: 'after', ref: target, row };
+}
+
+function applyDrop(dragged, drop) {
+  const own = kidsOf(dragged.id);
+  const rest = boards.filter((b) => b !== dragged && !own.includes(b));
+  const tops = rest.filter((b) => !b.parentId);
+  const kids = new Map(tops.map((t) => [t.id, rest.filter((b) => b.parentId === t.id)]));
+  const insert = (list, ref, offset) => list.splice(list.indexOf(ref) + offset, 0, dragged);
+  const { type, ref } = drop;
+  if (type === 'into') {
+    dragged.parentId = ref.id;
+    kids.get(ref.id).push(dragged);
+    if (collapsed.delete(ref.id)) saveCollapsed();
+  } else if ((type === 'before' || type === 'after') && ref.parentId) {
+    dragged.parentId = ref.parentId;
+    insert(kids.get(ref.parentId), ref, type === 'before' ? 0 : 1);
+  } else {
+    dragged.parentId = null;
+    insert(tops, ref, type === 'before' ? 0 : 1);
+  }
+  kids.set(dragged.id, own);
+  return tops.flatMap((t) => [t, ...(kids.get(t.id) || [])]);
+}
+
+// Press and drag a board to reorder it, drop it onto another board to nest it as a
+// sub-board, or drag a sub-board out to the left to make it top-level again.
+// A plain click still opens the board.
 let boardDragJustEnded = false;
 function startBoardDrag(e, item) {
-  if (!isPrimaryPress(e) || e.target.closest('.board-item-del, .board-rename-input')) return;
-  const items = [...els.boardList.querySelectorAll('.board-item')];
-  const from = items.indexOf(item);
-  const step = item.offsetHeight;
+  if (!isPrimaryPress(e) || e.target.closest('.board-item-del, .board-item-add, .board-item-toggle, .board-rename-input')) return;
+  const dragged = boards.find((b) => b.id === item.dataset.id);
+  if (!dragged) return;
   const startY = e.clientY;
   let dragging = false;
-  let to = from;
+  let drop = null;
+  let groupRows = [item];
+  let line = null;
+
+  const clearHints = () => {
+    if (line) { line.remove(); line = null; }
+    els.boardList.querySelectorAll('.drop-into').forEach((r) => r.classList.remove('drop-into'));
+  };
+  const showHint = () => {
+    clearHints();
+    if (!drop) return;
+    if (drop.type === 'into') { drop.row.classList.add('drop-into'); return; }
+    const listRect = els.boardList.getBoundingClientRect();
+    const rows = [...els.boardList.querySelectorAll('.board-item')].filter((r) => !groupRows.includes(r));
+    let refRow = drop.row;
+    let atTop = drop.type === 'before';
+    let indent = drop.ref.parentId ? 26 : 8;
+    if (drop.type === 'afterGroup') {
+      const ids = new Set([drop.ref.id, ...kidsOf(drop.ref.id).map((k) => k.id)]);
+      refRow = rows.filter((r) => ids.has(r.dataset.id)).pop() || drop.row;
+      indent = 8;
+    }
+    const rc = refRow.getBoundingClientRect();
+    line = document.createElement('div');
+    line.className = 'drop-line';
+    line.style.top = (atTop ? rc.top : rc.bottom) - listRect.top + els.boardList.scrollTop + 'px';
+    line.style.left = indent + 'px';
+    els.boardList.appendChild(line);
+  };
 
   trackDrag(e, item, {
     capture: false,
@@ -167,29 +345,32 @@ function startBoardDrag(e, item) {
       if (!dragging) {
         if (Math.abs(dy) < DRAG_THRESHOLD) return;
         dragging = true;
+        // A board being moved takes its sub-boards with it; tuck them away while dragging.
+        const ownIds = new Set(kidsOf(dragged.id).map((k) => k.id));
+        els.boardList.querySelectorAll('.board-item').forEach((r) => {
+          if (ownIds.has(r.dataset.id)) { groupRows.push(r); r.style.display = 'none'; }
+        });
         item.classList.add('dragging');
         els.boardList.classList.add('reordering');
       }
-      to = Math.max(0, Math.min(items.length - 1, from + Math.round(dy / step)));
-      const lift = Math.max(-from * step, Math.min((items.length - 1 - from) * step, dy));
-      item.style.transform = `translateY(${lift}px)`;
-      items.forEach((other, j) => {
-        if (other === item) return;
-        let shift = 0;
-        if (from < to && j > from && j <= to) shift = -step;
-        if (to < from && j >= to && j < from) shift = step;
-        other.style.transform = shift ? `translateY(${shift}px)` : '';
-      });
+      item.style.transform = `translateY(${dy}px)`;
+      drop = computeDrop(dragged, groupRows, ev.clientX, ev.clientY);
+      showHint();
     },
     onEnd() {
+      clearHints();
       els.boardList.classList.remove('reordering');
       if (!dragging) return;
       boardDragJustEnded = true; // swallow the click that follows the release
       setTimeout(() => { boardDragJustEnded = false; }, 150);
-      if (to !== from) {
-        const [moved] = boards.splice(from, 1);
-        boards.splice(to, 0, moved);
-        saveBoardOrder();
+      if (drop) {
+        const before = boards.map((b) => b.id + ':' + b.parentId).join();
+        const next = applyDrop(dragged, drop);
+        const after = next.map((b) => b.id + ':' + b.parentId).join();
+        if (before !== after) {
+          boards = next;
+          saveBoardOrder(dragged);
+        }
       }
       renderSidebar();
     },
@@ -236,7 +417,7 @@ els.boardList.addEventListener('dblclick', (e) => {
   const item = e.target.closest('.board-item');
   if (!item || e.target.closest('.board-item-del, .board-rename-input')) return;
   const nameEl = item.querySelector('.board-item-name');
-  const board = boards[[...els.boardList.children].indexOf(item)];
+  const board = boards.find((b) => b.id === item.dataset.id);
   if (nameEl && board) startRename(board, nameEl);
 });
 
@@ -257,7 +438,7 @@ els.newBoardBtn.addEventListener('click', () => {
     const name = input.value.trim();
     form.replaceWith(els.newBoardBtn);
     if (!name) return;
-    const board = { id: uid(), name, createdAt: Date.now(), view: null };
+    const board = { id: uid(), name, createdAt: Date.now(), view: null, parentId: null };
     await db.putBoard(board);
     boards.push(board);
     renderSidebar();
@@ -281,13 +462,18 @@ async function deleteBoard(board) {
     await cleanupCardBlobs(card);
     await db.deleteCard(card.id);
   }
+  // Sub-boards are kept and become top-level boards.
+  const orphans = kidsOf(board.id);
+  orphans.forEach((k) => { k.parentId = null; });
+  await Promise.all(orphans.map((k) => db.putBoard(k)));
   await db.deleteBoard(board.id);
   boards = boards.filter((b) => b.id !== board.id);
+  collapsed.delete(board.id);
   if (currentBoard && currentBoard.id === board.id) {
     if (boards.length > 0) {
-      await loadBoard(boards[0].id);
+      await loadBoard(boards.find((b) => !b.parentId).id);
     } else {
-      const fresh = { id: uid(), name: 'My First Board', createdAt: Date.now(), view: null };
+      const fresh = { id: uid(), name: 'My First Board', createdAt: Date.now(), view: null, parentId: null };
       await db.putBoard(fresh);
       boards.push(fresh);
       await loadBoard(fresh.id);
@@ -327,6 +513,7 @@ async function loadBoard(boardId) {
   const seq = ++loadSeq;
   selectedCardId = null;
   currentBoard = target;
+  revealBoard(target);
   localStorage.setItem(LAST_BOARD_KEY, boardId);
 
   els.boardName.textContent = target.name;
