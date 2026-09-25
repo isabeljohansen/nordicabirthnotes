@@ -109,19 +109,136 @@ function renderSidebar() {
   for (const board of boards) {
     const item = document.createElement('div');
     item.className = 'board-item' + (currentBoard && board.id === currentBoard.id ? ' active' : '');
+    item.title = 'Drag to reorder · double-click to rename';
     const name = document.createElement('div');
     name.className = 'board-item-name';
     name.textContent = board.name;
-    name.addEventListener('click', () => loadBoard(board.id));
+    name.addEventListener('click', () => {
+      if (!boardDragJustEnded) loadBoard(board.id);
+    });
     const del = document.createElement('button');
     del.className = 'board-item-del';
     del.textContent = '×';
     del.title = 'Delete board';
     confirmClick(del, 'Sure?', () => deleteBoard(board));
     item.append(name, del);
+    item.addEventListener('pointerdown', (e) => startBoardDrag(e, item));
     els.boardList.appendChild(item);
   }
 }
+
+// ---------- Reorder & rename boards ----------
+
+// Boards are listed oldest-first, so the order IS their creation timestamps. Rearranging
+// re-spaces those timestamps (keeping the new order) rather than adding a database column,
+// so there's nothing to migrate in Supabase and older copies of the app still read it fine.
+async function saveBoardOrder() {
+  const base = Math.min(...boards.map((b) => b.createdAt));
+  const changed = [];
+  boards.forEach((b, i) => {
+    const t = base + i * 1000;
+    if (b.createdAt !== t) {
+      b.createdAt = t;
+      changed.push(b);
+    }
+  });
+  try {
+    await Promise.all(changed.map((b) => db.putBoard(b)));
+  } catch (err) {
+    showToast("Couldn't save the new board order: " + (err.message || err));
+  }
+}
+
+// Press and drag a board up or down the list. A plain click still opens the board.
+let boardDragJustEnded = false;
+function startBoardDrag(e, item) {
+  if (!isPrimaryPress(e) || e.target.closest('.board-item-del, .board-rename-input')) return;
+  const items = [...els.boardList.querySelectorAll('.board-item')];
+  const from = items.indexOf(item);
+  const step = item.offsetHeight;
+  const startY = e.clientY;
+  let dragging = false;
+  let to = from;
+
+  trackDrag(e, item, {
+    capture: false,
+    onMove(ev) {
+      const dy = ev.clientY - startY;
+      if (!dragging) {
+        if (Math.abs(dy) < DRAG_THRESHOLD) return;
+        dragging = true;
+        item.classList.add('dragging');
+        els.boardList.classList.add('reordering');
+      }
+      to = Math.max(0, Math.min(items.length - 1, from + Math.round(dy / step)));
+      const lift = Math.max(-from * step, Math.min((items.length - 1 - from) * step, dy));
+      item.style.transform = `translateY(${lift}px)`;
+      items.forEach((other, j) => {
+        if (other === item) return;
+        let shift = 0;
+        if (from < to && j > from && j <= to) shift = -step;
+        if (to < from && j >= to && j < from) shift = step;
+        other.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    },
+    onEnd() {
+      els.boardList.classList.remove('reordering');
+      if (!dragging) return;
+      boardDragJustEnded = true; // swallow the click that follows the release
+      setTimeout(() => { boardDragJustEnded = false; }, 150);
+      if (to !== from) {
+        const [moved] = boards.splice(from, 1);
+        boards.splice(to, 0, moved);
+        saveBoardOrder();
+      }
+      renderSidebar();
+    },
+  });
+}
+
+function startRename(board, nameEl) {
+  const input = document.createElement('input');
+  input.className = 'board-rename-input';
+  input.value = board.name;
+  input.maxLength = 80;
+  input.setAttribute('aria-label', 'Board name');
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  async function finish(save) {
+    if (finished) return;
+    finished = true;
+    const name = input.value.trim();
+    if (save && name && name !== board.name) {
+      board.name = name;
+      if (currentBoard && currentBoard.id === board.id) els.boardName.textContent = name;
+      renderSidebar();
+      try {
+        await db.putBoard(board);
+      } catch (err) {
+        showToast("Couldn't rename that board: " + (err.message || err));
+      }
+    } else {
+      renderSidebar();
+    }
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+// Delegated, because clicking a board re-draws the list between the two clicks of a double-click.
+els.boardList.addEventListener('dblclick', (e) => {
+  const item = e.target.closest('.board-item');
+  if (!item || e.target.closest('.board-item-del, .board-rename-input')) return;
+  const nameEl = item.querySelector('.board-item-name');
+  const board = boards[[...els.boardList.children].indexOf(item)];
+  if (nameEl && board) startRename(board, nameEl);
+});
 
 els.newBoardBtn.addEventListener('click', () => {
   const form = document.createElement('div');
@@ -540,10 +657,15 @@ const isPrimaryPress = (e) => e.button === 0 && !e.ctrlKey;
 // trackpads and browsers), the drag still ends on the next mouse move instead of
 // staying stuck to the cursor and resizing or moving a card on every move afterwards.
 let endActiveDrag = null;
-function trackDrag(e, target, { onMove, onEnd }) {
+// capture: false skips routing the mouse to `target`. Capture is needed over iframes/canvases,
+// but it also makes the browser aim the follow-up "click" at `target` instead of the child
+// that was pressed, which would swallow clicks on things inside it (the board list).
+function trackDrag(e, target, { onMove, onEnd, capture = true }) {
   if (endActiveDrag) endActiveDrag({ type: 'superseded' }); // never two drags at once
   const id = e.pointerId;
-  try { target.setPointerCapture(id); } catch (_) { /* pointer already gone */ }
+  if (capture) {
+    try { target.setPointerCapture(id); } catch (_) { /* pointer already gone */ }
+  }
   let finished = false;
 
   const move = (ev) => {

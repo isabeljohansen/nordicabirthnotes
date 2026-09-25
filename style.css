@@ -148,6 +148,28 @@ svg { display: block; }
   border-radius: 2px;
 }
 .board-item:hover { background: rgba(194, 211, 219, 0.45); }
+.board-item { position: relative; user-select: none; -webkit-user-select: none; transition: transform 0.14s ease; }
+.board-item.dragging {
+  transition: none;
+  z-index: 2;
+  background: var(--accent);
+  box-shadow: 0 6px 18px rgba(11, 31, 63, 0.16);
+  cursor: grabbing;
+}
+#board-list.reordering .board-item { cursor: grabbing; }
+.board-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 27px;
+  padding: 0 7px;
+  background: #fff;
+  border: 1px solid var(--accent-deep);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  outline: none;
+}
 .board-item.active { background: var(--accent); }
 .board-item-name {
   flex: 1;
