@@ -818,7 +818,7 @@ function renderCard(card) {
   el.addEventListener('pointerdown', (e) => {
     pressedOnSelected = selectedCardId === card.id;
     const active = document.activeElement;
-    if (active && isEditingField(active) && !active.contains(e.target)) active.blur();
+    if (active && isEditingField(active) && !active.contains(e.target) && !e.target.closest('.format-bar')) active.blur();
     selectCard(card);
     bringToFront(card, el);
   }, true);

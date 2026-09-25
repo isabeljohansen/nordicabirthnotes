@@ -88,7 +88,32 @@ export const CARD_TYPES = {
       editor.innerHTML = card.data.html || '';
       editor.setAttribute('data-placeholder', 'Type a note…');
       editor.addEventListener('input', () => ctx.saveData(card, { html: editor.innerHTML }));
+      // Pasted text arrives as plain text so other websites' fonts and colors don't sneak in.
+      editor.addEventListener('paste', (e) => {
+        e.preventDefault();
+        document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
+      });
       body.appendChild(editor);
+
+      // Formatting bar: floats above the note while you're typing in it.
+      const bar = el('div', 'format-bar');
+      const addBtn = (html, title, run, cls = '') => {
+        const b = el('button', 'format-btn ' + cls, { type: 'button', title });
+        b.innerHTML = html;
+        b.addEventListener('mousedown', (e) => e.preventDefault()); // keep the text selection
+        b.addEventListener('click', () => { editor.focus(); run(); });
+        bar.appendChild(b);
+      };
+      const heading = (tag) => () => {
+        const now = (document.queryCommandValue('formatBlock') || '').toLowerCase();
+        document.execCommand('formatBlock', false, now === tag ? 'div' : tag);
+      };
+      addBtn('H<small>1</small>', 'Heading', heading('h2'), 'fb-h');
+      addBtn('H<small>2</small>', 'Subheading', heading('h3'), 'fb-h');
+      addBtn('B', 'Bold (Cmd+B)', () => document.execCommand('bold'), 'fb-b');
+      addBtn('I', 'Italic (Cmd+I)', () => document.execCommand('italic'), 'fb-i');
+      addBtn('&bull;', 'Bulleted list', () => document.execCommand('insertUnorderedList'), 'fb-list');
+      body.parentElement.appendChild(bar);
     },
   },
 
