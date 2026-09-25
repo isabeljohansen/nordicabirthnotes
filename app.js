@@ -1120,6 +1120,12 @@ function wireGlobalEvents() {
   });
 
   els.viewport.addEventListener('wheel', (e) => {
+    // Over a note (or any card) whose contents don't fit, the wheel scrolls that card
+    // instead of moving the board. Pinch/Cmd-scroll still zooms.
+    if (!e.ctrlKey && !e.metaKey) {
+      const body = e.target.closest && e.target.closest('.card-body');
+      if (body && (body.scrollHeight > body.clientHeight + 1 || body.scrollWidth > body.clientWidth + 1)) return;
+    }
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
       const rect = els.viewport.getBoundingClientRect();
